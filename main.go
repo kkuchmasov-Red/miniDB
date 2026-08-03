@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//тест
+//НЕ тест
 const (
 	INSERT    = "insert"
 	SELECT    = "select"
