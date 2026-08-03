@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+//тест
 const (
 	INSERT    = "insert"
 	SELECT    = "select"
