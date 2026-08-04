@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 func main() {
-
+	//главная 1
 	scanner := bufio.NewScanner(os.Stdin)
 	var db DB
 	db.NameStorage = "text.txt"
