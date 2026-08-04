@@ -36,8 +36,10 @@ type Storage struct {
 func main() {
 	//главная 1
 	scanner := bufio.NewScanner(os.Stdin)
+
 	var db DB
-	db.NameStorage = "text.txt"
+	db.SetStorage()
+
 	for {
 		comandName, args := parserCommand(scanner)
 
@@ -50,43 +52,11 @@ func main() {
 			db.Delete(args)
 		case SELECT:
 			db.SelectAll()
-		case TEST:
-			db.test()
 		case EXIT, EXIT_FAST:
 			os.Exit(0)
 		default:
 			fmt.Println("Команда не известна " + comandName)
 		}
-	}
-}
-
-func (db *DB) test() {
-	//db_val := *db
-
-	var err error
-	_, err = os.Stat(db.NameStorage)
-
-	if err != nil {
-		_, err = os.Create(db.NameStorage)
-	}
-
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	file, err := os.OpenFile(db.NameStorage, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	file.WriteString("asd\n")
-
-	if err != nil {
-		fmt.Println(err)
-		return
 	}
 }
 
@@ -121,8 +91,59 @@ func IDInArgs(args []string, position int) (int, error) {
 	return strconv.Atoi(args[position])
 }
 
+func (db *DB) SetStorage() {
+
+	db.NameStorage = "text.txt"
+	file, err := db.Storage(os.O_RDONLY | os.O_CREATE)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		text := scanner.Text()
+		args := strings.Split(text, "|")
+		if len(args) != 2 {
+			fmt.Println("Данные повреждены")
+			continue
+		}
+
+		id, err := IDInArgs(args, 0)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		newRow := Row{
+			ID:   id,
+			Name: args[1],
+		}
+		db.Row = append(db.Row, newRow)
+
+		fmt.Print(text + "\n")
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (db DB) Storage(flag int) (*os.File, error) {
+	file, err := os.OpenFile(db.NameStorage, flag, 0666)
+	if err != nil {
+		return file, err
+	}
+	return file, nil
+}
+
+func (db DB) RowToString(row Row) string {
+	return fmt.Sprintf("%d|%s", row.ID, row.Name)
+}
+
 func (db *DB) Insert(args []string) {
-	db_val := *db
 	err := CheckArgs(args, 2)
 	if err != nil {
 		fmt.Println(err)
@@ -142,12 +163,24 @@ func (db *DB) Insert(args []string) {
 			ID:   id,
 			Name: args[1],
 		}
-		db_val.Row = append(db_val.Row, newRow)
+		db.Row = append(db.Row, newRow)
+		db.InsertinStorage(newRow)
 	}
+
+}
+
+func (db DB) InsertinStorage(row Row) {
+	file, err := db.Storage(os.O_WRONLY | os.O_APPEND | os.O_CREATE)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	file.WriteString(db.RowToString(row) + "\n")
 }
 
 func (db *DB) Update(args []string) {
-	db_val := *db
 	err := CheckArgs(args, 2)
 	if err != nil {
 		fmt.Println(err)
@@ -160,17 +193,31 @@ func (db *DB) Update(args []string) {
 		return
 	}
 
-	for i := range db_val.Row {
-		if (db_val.Row)[i].ID == id {
-			(db_val.Row)[i].Name = args[1]
+	for i := range db.Row {
+		if (db.Row)[i].ID == id {
+			(db.Row)[i].Name = args[1]
+			db.RewriteStorage()
 			return
 		}
 	}
 	fmt.Println("id не существует")
 }
 
+func (db *DB) RewriteStorage() {
+	file, err := db.Storage(os.O_WRONLY)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	for i := range db.Row {
+		file.WriteString(db.RowToString(db.Row[i]) + "\n")
+	}
+
+}
+
 func (db *DB) Delete(args []string) {
-	db_val := *db
 	err := CheckArgs(args, 1)
 	if err != nil {
 		fmt.Println(err)
@@ -183,9 +230,10 @@ func (db *DB) Delete(args []string) {
 		return
 	}
 
-	for i := range db_val.Row {
-		if (db_val.Row)[i].ID == id {
-			db_val.Row = append((db_val.Row)[:i], (db_val.Row)[i+1:]...)
+	for i := range db.Row {
+		if db.Row[i].ID == id {
+			db.Row = append(db.Row[:i], db.Row[i+1:]...)
+			db.RewriteStorage()
 			return
 		}
 	}
@@ -193,8 +241,7 @@ func (db *DB) Delete(args []string) {
 	fmt.Println("id не существует")
 }
 func (db *DB) Exists(id int) bool {
-	db_val := *db
-	for _, row := range db_val.Row {
+	for _, row := range db.Row {
 		if row.ID == id {
 			return true
 		}
@@ -203,8 +250,25 @@ func (db *DB) Exists(id int) bool {
 }
 
 func (db *DB) SelectAll() {
-	db_val := *db
-	for _, row := range db_val.Row {
-		fmt.Printf("id %d; name %s;\n", row.ID, row.Name)
+	file, err := db.Storage(os.O_RDONLY)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		text := scanner.Text()
+		fmt.Print(text + "\n")
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Println(err)
+	}
+
+	//for _, row := range db.Row {
+	//	fmt.Printf("id %d; name %s;\n", row.ID, row.Name)
+	//}
 }
