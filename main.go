@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-//НЕ тест
 const (
 	INSERT    = "insert"
 	SELECT    = "select"
@@ -20,16 +19,25 @@ const (
 	TEST      = "test"
 )
 
-type DB []Row
+type DB struct {
+	NameStorage string
+	Row         []Row
+}
 
 type Row struct {
 	ID   int
 	Name string
 }
 
+type Storage struct {
+	Name string
+}
+
 func main() {
+
 	scanner := bufio.NewScanner(os.Stdin)
 	var db DB
+	db.NameStorage = "text.txt"
 	for {
 		comandName, args := parserCommand(scanner)
 
@@ -43,7 +51,7 @@ func main() {
 		case SELECT:
 			db.SelectAll()
 		case TEST:
-			test()
+			db.test()
 		case EXIT, EXIT_FAST:
 			os.Exit(0)
 		default:
@@ -52,8 +60,34 @@ func main() {
 	}
 }
 
-func test() {
+func (db *DB) test() {
+	//db_val := *db
 
+	var err error
+	_, err = os.Stat(db.NameStorage)
+
+	if err != nil {
+		_, err = os.Create(db.NameStorage)
+	}
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	file, err := os.OpenFile(db.NameStorage, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	file.WriteString("asd\n")
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
 
 func parserCommand(scanner *bufio.Scanner) (string, []string) {
@@ -88,6 +122,7 @@ func IDInArgs(args []string, position int) (int, error) {
 }
 
 func (db *DB) Insert(args []string) {
+	db_val := *db
 	err := CheckArgs(args, 2)
 	if err != nil {
 		fmt.Println(err)
@@ -107,11 +142,12 @@ func (db *DB) Insert(args []string) {
 			ID:   id,
 			Name: args[1],
 		}
-		*db = append(*db, newRow)
+		db_val.Row = append(db_val.Row, newRow)
 	}
 }
 
 func (db *DB) Update(args []string) {
+	db_val := *db
 	err := CheckArgs(args, 2)
 	if err != nil {
 		fmt.Println(err)
@@ -124,9 +160,9 @@ func (db *DB) Update(args []string) {
 		return
 	}
 
-	for i := range *db {
-		if (*db)[i].ID == id {
-			(*db)[i].Name = args[1]
+	for i := range db_val.Row {
+		if (db_val.Row)[i].ID == id {
+			(db_val.Row)[i].Name = args[1]
 			return
 		}
 	}
@@ -134,6 +170,7 @@ func (db *DB) Update(args []string) {
 }
 
 func (db *DB) Delete(args []string) {
+	db_val := *db
 	err := CheckArgs(args, 1)
 	if err != nil {
 		fmt.Println(err)
@@ -146,9 +183,9 @@ func (db *DB) Delete(args []string) {
 		return
 	}
 
-	for i := range *db {
-		if (*db)[i].ID == id {
-			*db = append((*db)[:i], (*db)[i+1:]...)
+	for i := range db_val.Row {
+		if (db_val.Row)[i].ID == id {
+			db_val.Row = append((db_val.Row)[:i], (db_val.Row)[i+1:]...)
 			return
 		}
 	}
@@ -156,7 +193,8 @@ func (db *DB) Delete(args []string) {
 	fmt.Println("id не существует")
 }
 func (db *DB) Exists(id int) bool {
-	for _, row := range *db {
+	db_val := *db
+	for _, row := range db_val.Row {
 		if row.ID == id {
 			return true
 		}
@@ -165,7 +203,8 @@ func (db *DB) Exists(id int) bool {
 }
 
 func (db *DB) SelectAll() {
-	for _, row := range *db {
+	db_val := *db
+	for _, row := range db_val.Row {
 		fmt.Printf("id %d; name %s;\n", row.ID, row.Name)
 	}
 }
