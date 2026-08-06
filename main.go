@@ -56,47 +56,16 @@ func main() {
 			db.Update(args)
 		case SELECT:
 			db.SelectAll()
-		case TEST:
-			test()
 		case EXIT, EXIT_FAST:
-			db.RewriteStorage()
+			err := db.RewriteStorage()
+			if err != nil {
+				fmt.Println(err)
+			}
 			os.Exit(0)
 		default:
 			fmt.Println("Команда не известна " + comandName)
 		}
 	}
-}
-
-func test() {
-	file, err := os.OpenFile("bd_bin", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	type row struct {
-		id   uint8
-		name string
-	}
-	var rows []row
-
-	rows = append(rows, row{id: 1, name: "asd"})
-	rows = append(rows, row{id: 2, name: "ssss"})
-	rows = append(rows, row{id: 3, name: "m,cxcz"})
-
-	var buf bytes.Buffer
-
-	for _, val := range rows {
-
-		binary.Write(&buf, binary.LittleEndian, val.id)
-		lenName := uint8(len(val.name))
-		binary.Write(&buf, binary.LittleEndian, lenName)
-		binary.Write(&buf, binary.LittleEndian, []byte(val.name))
-		binary.Write(&buf, binary.LittleEndian, []byte("\n"))
-	}
-	file.Write(buf.Bytes())
-
 }
 
 func parserCommand(scanner *bufio.Scanner) (string, []string) {
@@ -131,6 +100,36 @@ func IDInArgs(args []string, position int) (uint8, error) {
 	return uint8(val), err
 }
 
+func (row Row) MarshalBinary() (bytes.Buffer, error) {
+	var allBufer bytes.Buffer
+	var buf bytes.Buffer
+
+	if _, err := buf.Write([]byte{row.ID}); err != nil {
+		return allBufer, err
+	}
+	if _, err := buf.Write([]byte{uint8(len(row.Name))}); err != nil {
+		return allBufer, err
+	}
+	if _, err := buf.WriteString(row.Name); err != nil {
+		return allBufer, err
+	}
+
+	if err := binary.Write(&allBufer, binary.LittleEndian, uint16(len(buf.Bytes()))); err != nil {
+		return allBufer, err
+	}
+	if _, err := allBufer.Write(buf.Bytes()); err != nil {
+		return allBufer, err
+	}
+	return allBufer, nil
+}
+
+func (row Row) UnmarshalBinary(bin []byte) Row {
+	row.ID = bin[0:1][0]
+	lengthName := bin[1:2][0]
+	row.Name = string(bin[2 : lengthName+2])
+	return row
+}
+
 func (db DB) RowToString(row Row) string {
 	return fmt.Sprintf("%d|%s", row.ID, row.Name)
 }
@@ -153,51 +152,40 @@ func (db *DB) LoadStorage() {
 	defer file.Close()
 
 	for {
-		id := make([]byte, 1)
-		_, err := file.Read(id)
-
+		var err error
+		lenghtRowByte := make([]byte, 2)
+		_, err = io.ReadFull(file, lenghtRowByte)
 		if err == io.EOF {
 			break
 		}
+		var lenghtRow uint16
+		binary.Read(bytes.NewReader(lenghtRowByte), binary.LittleEndian, &lenghtRow)
 
-		lenName := make([]byte, 1)
-		_, err = file.Read(lenName)
+		rowBinary := make([]byte, lenghtRow)
+		_, err = io.ReadFull(file, rowBinary)
 
-		if err == io.EOF {
-			break
-		}
-
-		name := make([]byte, lenName[0])
-		_, err = file.Read(name)
-
-		if err == io.EOF {
-			break
-		}
-
-		newRow := Row{
-			ID:   id[0],
-			Name: string(name),
-		}
+		newRow := Row{}.UnmarshalBinary(rowBinary)
 		db.Rows = append(db.Rows, newRow)
 	}
 }
 
-func (db *DB) RewriteStorage() {
+func (db *DB) RewriteStorage() error {
+
 	file, err := db.Storage(os.O_WRONLY | os.O_TRUNC)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer file.Close()
-
-	var buf bytes.Buffer
-
 	for _, val := range db.Rows {
-		binary.Write(&buf, binary.LittleEndian, val.ID)
-		binary.Write(&buf, binary.LittleEndian, uint8(len(val.Name)))
-		binary.Write(&buf, binary.LittleEndian, []byte(val.Name))
+
+		buf, err := val.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(buf.Bytes())
 	}
-	file.Write(buf.Bytes())
+
+	return err
 }
 
 func (db *DB) Exists(id uint8) bool {
