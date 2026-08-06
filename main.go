@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -21,11 +24,11 @@ const (
 
 type DB struct {
 	NameStorage string
-	Row         []Row
+	Rows        []Row
 }
 
 type Row struct {
-	ID   int
+	ID   uint8
 	Name string
 }
 
@@ -38,7 +41,8 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	var db DB
-	db.SetStorage()
+	db.NameStorage = "bd_bin"
+	db.LoadStorage()
 
 	for {
 		comandName, args := parserCommand(scanner)
@@ -46,18 +50,53 @@ func main() {
 		switch strings.ToLower(comandName) {
 		case INSERT:
 			db.Insert(args)
-		case UPDATE:
-			db.Update(args)
 		case DELETE:
 			db.Delete(args)
+		case UPDATE:
+			db.Update(args)
 		case SELECT:
 			db.SelectAll()
+		case TEST:
+			test()
 		case EXIT, EXIT_FAST:
+			db.RewriteStorage()
 			os.Exit(0)
 		default:
 			fmt.Println("Команда не известна " + comandName)
 		}
 	}
+}
+
+func test() {
+	file, err := os.OpenFile("bd_bin", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	type row struct {
+		id   uint8
+		name string
+	}
+	var rows []row
+
+	rows = append(rows, row{id: 1, name: "asd"})
+	rows = append(rows, row{id: 2, name: "ssss"})
+	rows = append(rows, row{id: 3, name: "m,cxcz"})
+
+	var buf bytes.Buffer
+
+	for _, val := range rows {
+
+		binary.Write(&buf, binary.LittleEndian, val.id)
+		lenName := uint8(len(val.name))
+		binary.Write(&buf, binary.LittleEndian, lenName)
+		binary.Write(&buf, binary.LittleEndian, []byte(val.name))
+		binary.Write(&buf, binary.LittleEndian, []byte("\n"))
+	}
+	file.Write(buf.Bytes())
+
 }
 
 func parserCommand(scanner *bufio.Scanner) (string, []string) {
@@ -87,48 +126,13 @@ func CheckArgs(args []string, needCount int) error {
 	return nil
 }
 
-func IDInArgs(args []string, position int) (int, error) {
-	return strconv.Atoi(args[position])
+func IDInArgs(args []string, position int) (uint8, error) {
+	val, err := strconv.Atoi(args[position])
+	return uint8(val), err
 }
 
-func (db *DB) SetStorage() {
-
-	db.NameStorage = "text.txt"
-	file, err := db.Storage(os.O_RDONLY | os.O_CREATE)
-
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		text := scanner.Text()
-		args := strings.Split(text, "|")
-		if len(args) != 2 {
-			fmt.Println("Данные повреждены")
-			continue
-		}
-
-		id, err := IDInArgs(args, 0)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		newRow := Row{
-			ID:   id,
-			Name: args[1],
-		}
-		db.Row = append(db.Row, newRow)
-
-		fmt.Print(text + "\n")
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Println(err)
-	}
+func (db DB) RowToString(row Row) string {
+	return fmt.Sprintf("%d|%s", row.ID, row.Name)
 }
 
 func (db DB) Storage(flag int) (*os.File, error) {
@@ -139,8 +143,70 @@ func (db DB) Storage(flag int) (*os.File, error) {
 	return file, nil
 }
 
-func (db DB) RowToString(row Row) string {
-	return fmt.Sprintf("%d|%s", row.ID, row.Name)
+func (db *DB) LoadStorage() {
+	file, err := db.Storage(os.O_RDONLY | os.O_CREATE)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	for {
+		id := make([]byte, 1)
+		_, err := file.Read(id)
+
+		if err == io.EOF {
+			break
+		}
+
+		lenName := make([]byte, 1)
+		_, err = file.Read(lenName)
+
+		if err == io.EOF {
+			break
+		}
+
+		name := make([]byte, lenName[0])
+		_, err = file.Read(name)
+
+		if err == io.EOF {
+			break
+		}
+
+		newRow := Row{
+			ID:   id[0],
+			Name: string(name),
+		}
+		db.Rows = append(db.Rows, newRow)
+	}
+}
+
+func (db *DB) RewriteStorage() {
+	file, err := db.Storage(os.O_WRONLY | os.O_TRUNC)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+
+	var buf bytes.Buffer
+
+	for _, val := range db.Rows {
+		binary.Write(&buf, binary.LittleEndian, val.ID)
+		binary.Write(&buf, binary.LittleEndian, uint8(len(val.Name)))
+		binary.Write(&buf, binary.LittleEndian, []byte(val.Name))
+	}
+	file.Write(buf.Bytes())
+}
+
+func (db *DB) Exists(id uint8) bool {
+	for _, row := range db.Rows {
+		if row.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (db *DB) Insert(args []string) {
@@ -163,21 +229,9 @@ func (db *DB) Insert(args []string) {
 			ID:   id,
 			Name: args[1],
 		}
-		db.Row = append(db.Row, newRow)
-		db.InsertinStorage(newRow)
+		db.Rows = append(db.Rows, newRow)
 	}
 
-}
-
-func (db DB) InsertinStorage(row Row) {
-	file, err := db.Storage(os.O_WRONLY | os.O_APPEND | os.O_CREATE)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	file.WriteString(db.RowToString(row) + "\n")
 }
 
 func (db *DB) Update(args []string) {
@@ -193,28 +247,13 @@ func (db *DB) Update(args []string) {
 		return
 	}
 
-	for i := range db.Row {
-		if (db.Row)[i].ID == id {
-			(db.Row)[i].Name = args[1]
-			db.RewriteStorage()
+	for i := range db.Rows {
+		if (db.Rows)[i].ID == id {
+			(db.Rows)[i].Name = args[1]
 			return
 		}
 	}
 	fmt.Println("id не существует")
-}
-
-func (db *DB) RewriteStorage() {
-	file, err := db.Storage(os.O_WRONLY)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	for i := range db.Row {
-		file.WriteString(db.RowToString(db.Row[i]) + "\n")
-	}
-
 }
 
 func (db *DB) Delete(args []string) {
@@ -230,45 +269,18 @@ func (db *DB) Delete(args []string) {
 		return
 	}
 
-	for i := range db.Row {
-		if db.Row[i].ID == id {
-			db.Row = append(db.Row[:i], db.Row[i+1:]...)
-			db.RewriteStorage()
+	for i := range db.Rows {
+		if db.Rows[i].ID == id {
+			db.Rows = append(db.Rows[:i], db.Rows[i+1:]...)
 			return
 		}
 	}
 
 	fmt.Println("id не существует")
 }
-func (db *DB) Exists(id int) bool {
-	for _, row := range db.Row {
-		if row.ID == id {
-			return true
-		}
-	}
-	return false
-}
 
 func (db *DB) SelectAll() {
-	file, err := db.Storage(os.O_RDONLY)
-	if err != nil {
-		fmt.Println(err)
-		return
+	for _, row := range db.Rows {
+		fmt.Printf("id %d; name %s;\n", row.ID, row.Name)
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		text := scanner.Text()
-		fmt.Print(text + "\n")
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Println(err)
-	}
-
-	//for _, row := range db.Row {
-	//	fmt.Printf("id %d; name %s;\n", row.ID, row.Name)
-	//}
 }
