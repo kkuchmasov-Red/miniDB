@@ -101,32 +101,26 @@ func IDInArgs(args []string, position int) (uint8, error) {
 }
 
 func (row Row) MarshalBinary() (bytes.Buffer, error) {
-	var allBufer bytes.Buffer
 	var buf bytes.Buffer
 
-	if _, err := buf.Write([]byte{row.ID}); err != nil {
-		return allBufer, err
-	}
-	if _, err := buf.Write([]byte{uint8(len(row.Name))}); err != nil {
-		return allBufer, err
-	}
-	if _, err := buf.WriteString(row.Name); err != nil {
-		return allBufer, err
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(len(row.Name)+1)); err != nil {
+		return buf, err
 	}
 
-	if err := binary.Write(&allBufer, binary.LittleEndian, uint16(len(buf.Bytes()))); err != nil {
-		return allBufer, err
+	if _, err := buf.Write([]byte{row.ID}); err != nil {
+		return buf, err
 	}
-	if _, err := allBufer.Write(buf.Bytes()); err != nil {
-		return allBufer, err
+
+	if _, err := buf.WriteString(row.Name); err != nil {
+		return buf, err
 	}
-	return allBufer, nil
+
+	return buf, nil
 }
 
 func (row Row) UnmarshalBinary(bin []byte) Row {
-	row.ID = bin[0:1][0]
-	lengthName := bin[1:2][0]
-	row.Name = string(bin[2 : lengthName+2])
+	row.ID = bin[0]
+	row.Name = string(bin[1:])
 	return row
 }
 
